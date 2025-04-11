@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",                 // or "NodeNext" if you prefer
+    "moduleResolution": "nodenext",     // or "node16" / "bundler"
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"],
+  "ts-node": {
+    "esm": true
+  }
+}
