@@ -29,20 +29,20 @@ app.post('/upload', async (c) => {
   const token = c.req.header('x-access-token')
   // console.log('[Auth] Received token:', token)
   if (!token) {
-    // console.warn('[Auth] Missing access token')
+    console.warn('[Auth] Missing access token')
     return c.json({ error: 'Missing access token' }, 401)
   }
 
   let verified: boolean
   try {
     verified = await verifyPasetoToken(c.env as any, token)
-    // console.log('[Auth] Token verification result:', verified)
+    console.log('[Auth] Token verification result:', verified)
     if (!verified) {
-      // console.warn('[Auth] Invalid access token')
+      console.warn('[Auth] Invalid access token')
       return c.json({ error: 'Invalid token' }, 401)
     }
   } catch (err: any) {
-    // console.error('[Auth] Error verifying token:', err)
+    console.error('[Auth] Error verifying token:', err)
     return c.json({ error: 'Token verification failed', details: err.message }, 500)
   }
 
@@ -58,13 +58,6 @@ app.post('/upload', async (c) => {
 
   const { uploadId, key, partNumber, chunk, s3config } = body
   if (!uploadId || !key || !partNumber || !chunk || !s3config) {
-    // console.warn('[Validate] Missing one of required fields:', {
-    //   uploadId,
-    //   key,
-    //   partNumber,
-    //   chunk: !!chunk,
-    //   s3config,
-    // })
     return c.json({ error: 'Missing required fields' }, 400)
   }
 
