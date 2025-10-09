@@ -1,0 +1,28 @@
+name = 'api-worker'
+main = "src/index.ts"
+compatibility_date = "2025-10-07"
+compatibility_flags = [ "nodejs_compat" ]
+# 📦 Bind your KV Namespace
+# The `binding` is the name used in your code (c.env.MY_KV).
+# The `id` is what you copied from the dashboard for your "kv" namespace.
+[[kv_namespaces]]
+binding = "MY_KV"
+id = "d1003479d3aa45059f67ded0df869bc7"
+preview_id = "d1003479d3aa45059f67ded0df869bc7" # For local dev, you can use the same ID
+
+# 📦 Bind your D1 Database
+# `binding` is the name in the code (c.env.DB).
+# `database_name` is the name you gave it in the dashboard ("d1").
+# `database_id` is what you copied from the dashboard.
+[[d1_databases]]
+binding = "DB"
+database_name = "d1"
+database_id = "463354bc-1e09-49f3-b4ec-513cc6616f9f"
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "ec199cbaf3a8460387a94226f1918d05"
+
+
+[observability]
+enabled = true
