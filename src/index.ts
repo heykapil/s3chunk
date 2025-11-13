@@ -92,6 +92,35 @@ async function decryptSecret(jwe: string): Promise<string> {
   }
 }
 
+const s3ClientCache = new Map<string, S3Client>();
+
+const CLIENT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+function getS3Client(uploadId: string): S3Client | undefined {
+  return s3ClientCache.get(uploadId);
+}
+
+function setS3Client(uploadId: string, client: S3Client): void {
+  s3ClientCache.set(uploadId, client);
+  setTimeout(() => {
+    const clientToDestroy = s3ClientCache.get(uploadId);
+    if (clientToDestroy) {
+      console.log(`Evicting S3 client for abandoned UploadId: ${uploadId}`);
+      clientToDestroy.destroy();
+      s3ClientCache.delete(uploadId);
+    }
+  }, CLIENT_CACHE_TTL_MS);
+}
+
+function removeS3Client(uploadId: string): void {
+  const clientToDestroy = s3ClientCache.get(uploadId);
+  if (clientToDestroy) {
+    console.log(`Cleaning up S3 client for UploadId: ${uploadId}`);
+    clientToDestroy.destroy();
+    s3ClientCache.delete(uploadId);
+  }
+}
+
 const app = new Hono<{ Bindings: Env; Variables: Variables }>()
 
 // 1) Log every request/response (using console.log under the hood)
@@ -138,41 +167,53 @@ app.post('/upload', async (c) => {
     return c.json({ error: 'Missing required fields' }, 400)
   }
 
-  const bucketConfig = await decryptToken(s3config)
-  if (!bucketConfig) {
-    console.error('Invalid bucket configuration')
-    return c.json({ error: 'Invalid bucket configuration' }, 400)
-  }
-
   if (!(chunk instanceof Blob)) {
-    console.error('Chunk is not a Blob')
-    return c.json({ error: 'Invalid chunk type' }, 400)
+    console.error('Chunk is not a Blob or File');
+    return c.json({ error: 'Invalid chunk type' }, 400);
   }
-  const buffer = new Uint8Array(await chunk.arrayBuffer())
-  const access_key_decrypted = await decryptSecret(bucketConfig.accessKey)
-  const secret_key_decrypted = await decryptSecret(bucketConfig.secretKey)
-  if(!access_key_decrypted || !secret_key_decrypted){
-    console.error('Invalid access key or secret key')
-    return c.json({ error: 'Invalid access key or secret key' }, 400)
-  }
-  const s3 = new S3Client({
-    region: bucketConfig.region,
-    endpoint: bucketConfig.endpoint,
-    credentials: {
-      accessKeyId: access_key_decrypted,
-      secretAccessKey: secret_key_decrypted,
-    },
-    forcePathStyle: true,
-  })
+  
+  let s3: S3Client | undefined;
 
   try {
+    s3 = getS3Client(uploadId);
+
+    if (!s3) {
+      console.log(`Creating new S3 client for UploadId: ${uploadId}`);
+      const bucketConfig = await decryptToken(s3config)
+      if (!bucketConfig) {
+        console.error('Invalid bucket configuration')
+        return c.json({ error: 'Invalid bucket configuration' }, 400)
+      }
+
+      const access_key_decrypted = await decryptSecret(bucketConfig.accessKey)
+      const secret_key_decrypted = await decryptSecret(bucketConfig.secretKey)
+      if(!access_key_decrypted || !secret_key_decrypted){
+        console.error('Invalid access key or secret key')
+        return c.json({ error: 'Invalid access key or secret key' }, 400)
+      }
+
+      s3 = new S3Client({
+        region: bucketConfig.region,
+        endpoint: bucketConfig.endpoint,
+        credentials: {
+          accessKeyId: access_key_decrypted,
+          secretAccessKey: secret_key_decrypted,
+        },
+        forcePathStyle: true,
+      });
+      setS3Client(uploadId, s3);
+    } else {
+      console.log(`Reusing S3 client for UploadId: ${uploadId}`);
+    }
+
     const { ETag } = await s3.send(
       new UploadPartCommand({
         Bucket: bucketConfig.name,
         Key: key,
         UploadId: uploadId,
         PartNumber: partNum,
-        Body: buffer,
+        Body: chunk.stream() as any, // Use chunk.stream()
+        ContentLength: chunk.size, 
       })
     )
     if (!ETag) throw new Error('No ETag returned')
@@ -186,8 +227,17 @@ app.post('/upload', async (c) => {
   } catch (e: any) {
     console.error('Upload failed', e)
     return c.json({ error: 'Upload failed', details: e.message }, 500)
-  }
+  } 
 })
+
+app.post('/clean-up', async (c) => {
+  const { uploadId } = await c.req.json();
+  if (uploadId) {
+    removeS3Client(uploadId as string);
+  }
+  return c.json({ success: true, message: "Upload resources cleaned up." });
+});
+
 
 app.get('/', (c) => c.text('OK'))
 app.get('/health', (c) => c.text('OK'))
