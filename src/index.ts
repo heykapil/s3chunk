@@ -6,7 +6,7 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger'; // ← Logger middleware
 import { compactDecrypt, CompactEncrypt } from 'jose';
 import { decrypt, verify } from 'paseto-ts/v4';
-
+import { Readable } from 'node:stream'; 
 interface Env {
   PASETO_SECRET_KEY: string
   PASETO_PUBLIC_KEY: string
@@ -222,14 +222,14 @@ app.post('/upload', async (c) => {
       console.error('S3 client or bucket config was not initialized.');
       return c.json({ error: 'Internal server error' }, 500);
     }
-
+    const nodeStream = Readable.fromWeb(chunk.stream() as any);
     const { ETag } = await s3.send(
       new UploadPartCommand({
         Bucket: bucketConfig.name, // <-- This is now valid
         Key: key,
         UploadId: uploadId,
         PartNumber: partNum,
-        Body: chunk.stream() as any, // Use chunk.stream()
+        Body: nodeStream,
         ContentLength: chunk.size, 
       })
     )
