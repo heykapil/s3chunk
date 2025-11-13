@@ -6,7 +6,7 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger'; // ← Logger middleware
 import { compactDecrypt, CompactEncrypt } from 'jose';
 import { decrypt, verify } from 'paseto-ts/v4';
-import { Readable } from 'node:stream'; 
+
 interface Env {
   PASETO_SECRET_KEY: string
   PASETO_PUBLIC_KEY: string
@@ -92,10 +92,9 @@ async function decryptSecret(jwe: string): Promise<string> {
   }
 }
 
-// --- MODIFIED: In-memory cache for S3 Clients AND their configs ---
 interface S3CacheEntry {
   client: S3Client;
-  config: any; // This holds the decrypted bucketConfig
+  config: any; 
 }
 const s3ClientCache = new Map<string, S3CacheEntry>();
 
@@ -129,12 +128,11 @@ function removeS3Client(uploadId: string): void {
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>()
 
-// 1) Log every request/response (using console.log under the hood)
 app.use('*', logger((msg, ...rest) => {
   console.log(msg, ...rest)
 }))
 
-// 2) Enable CORS
+
 app.use('*', cors())
 
 // Preflight handler
@@ -179,14 +177,13 @@ app.post('/upload', async (c) => {
   }
   
   let s3: S3Client | undefined;
-  let bucketConfig: any; // <-- Declared in the outer scope
+  let bucketConfig: any; 
 
   try {
-    const cachedEntry = getS3CacheEntry(uploadId); // <-- Use new function
+    const cachedEntry = getS3CacheEntry(uploadId);
 
     if (!cachedEntry) {
       console.log(`Creating new S3 client for UploadId: ${uploadId}`);
-      // Assign to the outer scope variable
       bucketConfig = await decryptToken(s3config) 
       if (!bucketConfig) {
         console.error('Invalid bucket configuration')
@@ -209,28 +206,25 @@ app.post('/upload', async (c) => {
         },
         forcePathStyle: true,
       });
-      // Use the new function to set both client and config
       setS3CacheEntry(uploadId, s3, bucketConfig); 
     } else {
       console.log(`Reusing S3 client for UploadId: ${uploadId}`);
-      s3 = cachedEntry.client; // <-- Assign S3 client from cache
-      bucketConfig = cachedEntry.config; // <-- Assign config from cache
+      s3 = cachedEntry.client; 
+      bucketConfig = cachedEntry.config;
     }
-
-    // This check is good for safety and type-checking
+    
     if (!s3 || !bucketConfig) {
       console.error('S3 client or bucket config was not initialized.');
       return c.json({ error: 'Internal server error' }, 500);
     }
-    const nodeStream = Readable.fromWeb(chunk.stream() as any);
+    const buffer = new Uint8Array(await chunk.arrayBuffer());
     const { ETag } = await s3.send(
       new UploadPartCommand({
-        Bucket: bucketConfig.name, // <-- This is now valid
+        Bucket: bucketConfig.name, 
         Key: key,
         UploadId: uploadId,
         PartNumber: partNum,
-        Body: nodeStream,
-        ContentLength: chunk.size, 
+        Body: buffer,
       })
     )
     if (!ETag) throw new Error('No ETag returned')
@@ -239,7 +233,7 @@ app.post('/upload', async (c) => {
     return c.json({
       success: true,
       ETag: ETag.replace(/"/g, ''),
-      cdnUrl: bucketConfig.cdnUrl ? `${bucketConfig.cdnUrl}/${key}` : undefined, // <-- This is now valid
+      cdnUrl: bucketConfig.cdnUrl ? `${bucketConfig.cdnUrl}/${key}` : undefined,
     })
   } catch (e: any) {
     console.error('Upload failed', e)
@@ -257,9 +251,7 @@ app.post('/clean-up', async (c) => {
 
 
 app.get('/', (c) => c.text('OK'))
-app.get('/health', (c) => c.text('OK'))
 
-// Start server
 serve({
   fetch: app.fetch,
   port: Number(process.env.PORT) || 8080,
