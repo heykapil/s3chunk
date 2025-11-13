@@ -92,31 +92,37 @@ async function decryptSecret(jwe: string): Promise<string> {
   }
 }
 
-const s3ClientCache = new Map<string, S3Client>();
+// --- MODIFIED: In-memory cache for S3 Clients AND their configs ---
+interface S3CacheEntry {
+  client: S3Client;
+  config: any; // This holds the decrypted bucketConfig
+}
+const s3ClientCache = new Map<string, S3CacheEntry>();
 
 const CLIENT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-function getS3Client(uploadId: string): S3Client | undefined {
+function getS3CacheEntry(uploadId: string): S3CacheEntry | undefined {
   return s3ClientCache.get(uploadId);
 }
 
-function setS3Client(uploadId: string, client: S3Client): void {
-  s3ClientCache.set(uploadId, client);
+function setS3CacheEntry(uploadId: string, client: S3Client, config: any): void {
+  s3ClientCache.set(uploadId, { client, config });
+  // Set a timer to automatically remove the client after TTL
   setTimeout(() => {
-    const clientToDestroy = s3ClientCache.get(uploadId);
-    if (clientToDestroy) {
+    const entry = s3ClientCache.get(uploadId);
+    if (entry) {
       console.log(`Evicting S3 client for abandoned UploadId: ${uploadId}`);
-      clientToDestroy.destroy();
+      entry.client.destroy();
       s3ClientCache.delete(uploadId);
     }
   }, CLIENT_CACHE_TTL_MS);
 }
 
 function removeS3Client(uploadId: string): void {
-  const clientToDestroy = s3ClientCache.get(uploadId);
-  if (clientToDestroy) {
+  const entry = s3ClientCache.get(uploadId);
+  if (entry) {
     console.log(`Cleaning up S3 client for UploadId: ${uploadId}`);
-    clientToDestroy.destroy();
+    entry.client.destroy(); // Destroy the client inside the entry
     s3ClientCache.delete(uploadId);
   }
 }
@@ -173,13 +179,15 @@ app.post('/upload', async (c) => {
   }
   
   let s3: S3Client | undefined;
+  let bucketConfig: any; // <-- Declared in the outer scope
 
   try {
-    s3 = getS3Client(uploadId);
+    const cachedEntry = getS3CacheEntry(uploadId); // <-- Use new function
 
-    if (!s3) {
+    if (!cachedEntry) {
       console.log(`Creating new S3 client for UploadId: ${uploadId}`);
-      const bucketConfig = await decryptToken(s3config)
+      // Assign to the outer scope variable
+      bucketConfig = await decryptToken(s3config) 
       if (!bucketConfig) {
         console.error('Invalid bucket configuration')
         return c.json({ error: 'Invalid bucket configuration' }, 400)
@@ -201,14 +209,23 @@ app.post('/upload', async (c) => {
         },
         forcePathStyle: true,
       });
-      setS3Client(uploadId, s3);
+      // Use the new function to set both client and config
+      setS3CacheEntry(uploadId, s3, bucketConfig); 
     } else {
       console.log(`Reusing S3 client for UploadId: ${uploadId}`);
+      s3 = cachedEntry.client; // <-- Assign S3 client from cache
+      bucketConfig = cachedEntry.config; // <-- Assign config from cache
+    }
+
+    // This check is good for safety and type-checking
+    if (!s3 || !bucketConfig) {
+      console.error('S3 client or bucket config was not initialized.');
+      return c.json({ error: 'Internal server error' }, 500);
     }
 
     const { ETag } = await s3.send(
       new UploadPartCommand({
-        Bucket: bucketConfig.name,
+        Bucket: bucketConfig.name, // <-- This is now valid
         Key: key,
         UploadId: uploadId,
         PartNumber: partNum,
@@ -222,7 +239,7 @@ app.post('/upload', async (c) => {
     return c.json({
       success: true,
       ETag: ETag.replace(/"/g, ''),
-      cdnUrl: bucketConfig.cdnUrl ? `${bucketConfig.cdnUrl}/${key}` : undefined,
+      cdnUrl: bucketConfig.cdnUrl ? `${bucketConfig.cdnUrl}/${key}` : undefined, // <-- This is now valid
     })
   } catch (e: any) {
     console.error('Upload failed', e)
